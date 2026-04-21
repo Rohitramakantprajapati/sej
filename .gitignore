@@ -1,0 +1,17 @@
+# Python environments
+.venv/
+.venv313/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local runtime artifacts
+uploads/
+autoanalyst.db
+
+# Local assistant/project context files (do not push)
+.cursorrules
+ai-context.md
+CLAUDE.md
+claud.md
