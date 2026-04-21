@@ -1215,8 +1215,6 @@ function includeExcludeValue(column, value, include = true, scope = 'report', vi
   const next = current.size ? { type: 'category', values: [...current] } : null;
   setFilterScope(scope, column, next, visualId);
 }
-  renderReportCanvas();
-}
 
 function getDataRows() {
   return STATE.rows;
