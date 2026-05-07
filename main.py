@@ -15,7 +15,8 @@ import numpy as np
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from eda_engine import run_eda
@@ -25,7 +26,7 @@ from modeling import run_modeling
 # ── App setup ──────────────────────────────────────────────────────────────────
 
 APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
-MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "20"))
+MAX_UPLOAD_MB = 50
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "120"))
 SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "24"))
@@ -40,8 +41,24 @@ ALLOWED_ORIGINS = [
     if origin.strip()
 ]
 ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".tsv", ".xlsx", ".xls", ".json", ".parquet"}
+ALLOWED_UPLOAD_MIME_TYPES = {
+    "text/csv",
+    "text/tab-separated-values",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/json",
+    "application/octet-stream",
+    "application/x-parquet",
+    "application/vnd.apache.parquet",
+}
 
 app = FastAPI(title="sej API", version="1.1.0")
+
+# Serve dashboard.html at root and /dashboard.html
+@app.get("/", include_in_schema=False)
+@app.get("/dashboard.html", include_in_schema=False)
+async def serve_dashboard():
+    return FileResponse(Path(__file__).parent / "dashboard.html")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -498,8 +515,17 @@ async def upload_file(file: UploadFile = File(...)):
     """Upload a CSV/Excel/JSON file, run EDA, return session_id + EDA results."""
     try:
         content = await file.read()
+        # MIME type check
+        if file.content_type not in ALLOWED_UPLOAD_MIME_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported MIME type '{file.content_type}'. Allowed: {sorted(ALLOWED_UPLOAD_MIME_TYPES)}",
+            )
         validate_upload(file.filename or "", content)
-        result = load_bytes(content, file.filename or "uploaded_file")
+        try:
+            result = load_bytes(content, file.filename or "uploaded_file")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Malformed or unreadable file: {e}")
 
         if result.df.empty:
             raise HTTPException(status_code=400, detail="Uploaded file produced an empty DataFrame.")

@@ -89,9 +89,9 @@ def load_bytes(content: bytes, filename: str) -> IngestionResult:
                 except Exception:
                     pass
             else:
-                raise ValueError(f"Could not parse CSV: {e}")
+                raise ValueError(f"Malformed or unreadable CSV: {e}")
         else:
-            raise ValueError(f"Could not parse file: {e}")
+            raise ValueError(f"Malformed or unreadable file: {e}")
 
     df = _normalize_columns(df)
 
