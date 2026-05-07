@@ -597,8 +597,87 @@ body { background: var(--bg); color: var(--ink); font-family: var(--font-body); 
     </div>
 
     <div class="sidebar-section">
+      <div class="sidebar-label">Schema Editor</div>
+      <div id="schema-editor-panel"></div>
+    </div>
+    <div class="sidebar-section">
       <div class="sidebar-label">Navigation</div>
       <ul class="nav-items" id="main-nav">
+        // ─── Schema Editor Logic ──────────────────────────────────────────────
+        function renderSchemaEditor() {
+          const panel = document.getElementById('schema-editor-panel');
+          if (!panel || !STATE.eda || !STATE.summary) return;
+          const columns = STATE.summary.column_names || Object.keys(STATE.rows[0] || {});
+          const dtypes = STATE.eda.dtypes || {};
+          const typeOptions = [
+            { value: 'numeric', label: 'Numeric' },
+            { value: 'categorical', label: 'Categorical' },
+            { value: 'datetime', label: 'Datetime' },
+            { value: 'text', label: 'Text' },
+          ];
+          panel.innerHTML = `
+            <table class="detail-table" style="margin-bottom:10px;">
+              <thead><tr><th>Column</th><th>Type</th><th>Override</th></tr></thead>
+              <tbody>
+                ${columns.map(col => `
+                  <tr>
+                    <td>${escapeHtml(col)}</td>
+                    <td>${escapeHtml(dtypes?.[col] || '')}</td>
+                    <td>
+                      <select data-col="${escapeHtml(col)}" class="schema-type-select">
+                        <option value="">—</option>
+                        ${typeOptions.map(opt => `<option value="${opt.value}">${opt.label}</option>`).join('')}
+                      </select>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+            <button class="btn btn-primary btn-sm" id="apply-schema-btn">Apply Overrides</button>
+            <div id="schema-override-status" style="margin-top:6px;font-size:0.8em;color:var(--accent-red);"></div>
+          `;
+          document.getElementById('apply-schema-btn').onclick = async function() {
+            const selects = panel.querySelectorAll('.schema-type-select');
+            let anyChanged = false;
+            for (const sel of selects) {
+              const dtype = sel.value;
+              const col = sel.getAttribute('data-col');
+              if (dtype) {
+                anyChanged = true;
+                try {
+                  const resp = await fetch(`${API}/schema-override`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: STATE.sessionId, column: col, dtype })
+                  });
+                  const data = await resp.json();
+                  if (!resp.ok || !data.success) throw new Error(data.detail || 'Failed');
+                  STATE.eda = data.eda;
+                  STATE.summary = { ...STATE.summary, dtypes: data.dtypes };
+                  document.getElementById('schema-override-status').textContent = `Override applied to ${col}`;
+                } catch (e) {
+                  document.getElementById('schema-override-status').textContent = `Error: ${e.message}`;
+                }
+              }
+            }
+            if (anyChanged) {
+              await fetchAndRenderSession(STATE.sessionId);
+              renderSchemaEditor();
+            }
+          };
+        }
+        // Call renderSchemaEditor after session load
+        async function fetchAndRenderSession(sessionId) {
+          const resp = await fetch(`${API}/sessions/${sessionId}`);
+          const data = await resp.json();
+          STATE.eda = data.eda;
+          STATE.summary = {
+            column_names: data.columns,
+            dtypes: data.eda?.dtypes || {},
+          };
+          renderSchemaEditor();
+          // ...existing code...
+        }
         <li class="nav-item"><a href="#" class="active" data-section="auto-dashboard">
           <svg class="nav-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M3 3a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H4a1 1 0 01-1-1V3zm8 0a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1h-4a1 1 0 01-1-1V3zM3 12a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1H4a1 1 0 01-1-1v-5zm8 3a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1h-4a1 1 0 01-1-1v-2z"/></svg>
           Auto Dashboard

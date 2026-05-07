@@ -1,3 +1,52 @@
+from fastapi import Body
+# ── Schema Override Endpoint ─────────────────────────────────────────────
+class SchemaOverrideRequest(BaseModel):
+    session_id: str
+    column: str
+    dtype: str
+
+@app.post("/schema-override")
+async def schema_override(req: SchemaOverrideRequest = Body(...)):
+    session = hydrate_session(req.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    df = session["df"]
+    col = req.column
+    dtype = req.dtype
+    if col not in df.columns:
+        raise HTTPException(status_code=400, detail=f"Column '{col}' not found.")
+    # Supported dtypes: numeric, categorical, datetime, text
+    try:
+        if dtype == "numeric":
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        elif dtype == "categorical":
+            df[col] = df[col].astype("category")
+        elif dtype == "datetime":
+            df[col] = pd.to_datetime(df[col], errors="coerce")
+        elif dtype == "text":
+            df[col] = df[col].astype(str)
+        else:
+            raise ValueError(f"Unsupported dtype '{dtype}'.")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to cast column: {e}")
+    # Re-run EDA
+    eda = run_eda(df)
+    session["eda"] = eda
+    # Optionally update model if present (do not retrain automatically)
+    update_session_record = save_session_record if "save_session_record" in globals() else lambda **kwargs: None
+    update_session_record(
+        session_id=req.session_id,
+        file_name=session["file_name"],
+        file_path=session["file_path"],
+        eda=eda,
+        model=session.get("model"),
+    )
+    return JSONResponse(jsonify({
+        "success": True,
+        "eda": eda,
+        "columns": df.columns.tolist(),
+        "dtypes": {c: str(df[c].dtype) for c in df.columns},
+    }))
 """sej FastAPI backend routes and runtime services."""
 
 import json
