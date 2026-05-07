@@ -2874,16 +2874,20 @@ function renderKPIs(kpis) {
 function renderStatsTable(numeric) {
   const cols=Object.keys(numeric);
   if(!cols.length){document.getElementById('stats-table-wrap').innerHTML='<p style="color:var(--ink-4);font-size:0.82rem">No numeric columns.</p>';return;}
-  const headers=['Column','Count','Mean','Median','Std','Min','Max','Skewness','Missing %'];
+  const headers=['Column','Count','Mean','Median','Std','Min','Max','Skewness','Kurtosis','Cardinality','% Unique','Bimodal?','Missing %'];
   const skewClass=s=>Math.abs(s)>1?'skew-pill skew-high':'skew-pill skew-normal';
   document.getElementById('stats-table-wrap').innerHTML=`
     <table class="stats-table">
       <thead><tr>${headers.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
       <tbody>${cols.map(c=>{const s=numeric[c];return`
-        <tr onmouseenter="showTooltip(event,[['__title__','${c}'],['Q1','${s.q1}'],['Q3','${s.q3}'],['IQR','${s.iqr}'],['Unique','${s.unique}']])" onmouseleave="hideTooltip()">
+        <tr onmouseenter="showTooltip(event,[['__title__','${c}'],['Q1','${s.q1}'],['Q3','${s.q3}'],['IQR','${s.iqr}'],['Unique','${s.unique}'],['Cardinality','${s.cardinality}'],['% Unique','${s.pct_unique}'],['Kurtosis','${s.kurtosis}'],['Bimodal','${s.is_bimodal}']])" onmouseleave="hideTooltip()">
           <td>${c}</td><td>${s.count}</td><td>${s.mean}</td><td>${s.median}</td>
           <td>${s.std}</td><td>${s.min}</td><td>${s.max}</td>
           <td><span class="${skewClass(s.skewness)}">${s.skewness}</span></td>
+          <td>${s.kurtosis}</td>
+          <td>${s.cardinality}</td>
+          <td>${s.pct_unique}%</td>
+          <td>${s.is_bimodal?'<span class=\'auto-badge info\'>Yes</span>':'<span class=\'auto-badge\'>No</span>'}</td>
           <td>${s.missing_pct}%</td>
         </tr>`;}).join('')}
       </tbody>

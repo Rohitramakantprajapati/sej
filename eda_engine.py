@@ -36,6 +36,17 @@ def descriptive_stats(df: pd.DataFrame) -> Dict[str, Any]:
         s = df[col].dropna()
         if len(s) == 0:
             continue
+        # Cardinality and pct_unique
+        cardinality = int(s.nunique())
+        pct_unique = round(cardinality / len(s) * 100, 2) if len(s) else 0.0
+        # Bimodality detection: simple method using histogram peaks
+        def is_bimodal(series):
+            try:
+                counts, _ = np.histogram(series, bins='auto')
+                peaks = np.sum((counts[1:-1] > counts[:-2]) & (counts[1:-1] > counts[2:]))
+                return peaks >= 2
+            except Exception:
+                return False
         numeric_stats[col] = {
             "count": int(s.count()),
             "mean": round(float(s.mean()), 4),
@@ -52,7 +63,10 @@ def descriptive_stats(df: pd.DataFrame) -> Dict[str, Any]:
             "kurtosis": round(float(s.kurt()), 4),
             "missing": int(df[col].isnull().sum()),
             "missing_pct": round(df[col].isnull().mean() * 100, 2),
-            "unique": int(s.nunique()),
+            "unique": cardinality,
+            "cardinality": cardinality,
+            "pct_unique": pct_unique,
+            "is_bimodal": is_bimodal(s),
         }
 
     categorical_stats = {}
