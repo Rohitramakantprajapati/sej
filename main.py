@@ -1,3 +1,65 @@
+# ── Data Cleaning Endpoint ─────────────────────────────────────────────
+class CleanRequest(BaseModel):
+    session_id: str
+    operation: str
+    column: Optional[str] = None
+    method: Optional[str] = None
+    value: Optional[str] = None
+    new_name: Optional[str] = None
+
+@app.post("/clean")
+async def clean_data(req: CleanRequest = Body(...)):
+    session = hydrate_session(req.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    df = session["df"]
+    op = req.operation
+    col = req.column
+    if op == "drop_column":
+        if col not in df.columns:
+            raise HTTPException(status_code=400, detail=f"Column '{col}' not found.")
+        df.drop(columns=[col], inplace=True)
+    elif op == "fill_nulls":
+        if col not in df.columns:
+            raise HTTPException(status_code=400, detail=f"Column '{col}' not found.")
+        method = req.method or "mean"
+        if method == "mean":
+            val = df[col].mean()
+        elif method == "median":
+            val = df[col].median()
+        elif method == "mode":
+            val = df[col].mode().iloc[0] if not df[col].mode().empty else None
+        elif method == "value":
+            val = req.value
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported fill method '{method}'.")
+        df[col].fillna(val, inplace=True)
+    elif op == "drop_duplicates":
+        df.drop_duplicates(inplace=True)
+    elif op == "rename_column":
+        if col not in df.columns:
+            raise HTTPException(status_code=400, detail=f"Column '{col}' not found.")
+        new_name = req.new_name
+        if not new_name:
+            raise HTTPException(status_code=400, detail="New column name required.")
+        df.rename(columns={col: new_name}, inplace=True)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported operation '{op}'.")
+    # Re-run EDA
+    eda = run_eda(df)
+    session["eda"] = eda
+    save_session_record(
+        session_id=req.session_id,
+        file_name=session["file_name"],
+        file_path=session["file_path"],
+        eda=eda,
+        model=session.get("model"),
+    )
+    return JSONResponse(jsonify({
+        "success": True,
+        "eda": eda,
+        "columns": df.columns.tolist(),
+    }))
 from fastapi import Body
 # ── Schema Override Endpoint ─────────────────────────────────────────────
 class SchemaOverrideRequest(BaseModel):

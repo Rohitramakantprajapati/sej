@@ -736,7 +736,93 @@ body { background: var(--bg); color: var(--ink); font-family: var(--font-body); 
     <section class="section active" id="sec-auto-dashboard">
       <div class="section-title">Auto Dashboard</div>
       <div class="section-sub" id="auto-sub">Power BI-style layout assembled from the current dataset</div>
+      <div id="cleaning-panel" class="chart-card full-width" style="margin-bottom:18px;"></div>
       <div class="report-shell">
+        // ─── Data Cleaning Panel ──────────────────────────────────────────────
+        function renderCleaningPanel() {
+          const panel = document.getElementById('cleaning-panel');
+          if (!panel || !STATE.summary) return;
+          const columns = STATE.summary.column_names || [];
+          panel.innerHTML = `
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+              <select id="clean-op-select" class="report-select">
+                <option value="drop_column">Drop Column</option>
+                <option value="fill_nulls">Fill Nulls</option>
+                <option value="drop_duplicates">Drop Duplicates</option>
+                <option value="rename_column">Rename Column</option>
+              </select>
+              <select id="clean-col-select" class="report-select">
+                <option value="">— Column —</option>
+                ${columns.map(col => `<option value="${col}">${col}</option>`).join('')}
+              </select>
+              <select id="clean-method-select" class="report-select" style="display:none;">
+                <option value="mean">Mean</option>
+                <option value="median">Median</option>
+                <option value="mode">Mode</option>
+                <option value="value">Value…</option>
+              </select>
+              <input id="clean-value-input" class="report-input" placeholder="Value" style="display:none;width:90px;" />
+              <input id="clean-newname-input" class="report-input" placeholder="New name" style="display:none;width:120px;" />
+              <button class="btn btn-primary btn-sm" id="apply-clean-btn">Apply</button>
+              <span id="clean-status" style="margin-left:10px;font-size:0.9em;color:var(--accent-red);"></span>
+            </div>
+          `;
+          const opSel = document.getElementById('clean-op-select');
+          const colSel = document.getElementById('clean-col-select');
+          const methodSel = document.getElementById('clean-method-select');
+          const valueInput = document.getElementById('clean-value-input');
+          const newNameInput = document.getElementById('clean-newname-input');
+          opSel.onchange = function() {
+            methodSel.style.display = opSel.value === 'fill_nulls' ? '' : 'none';
+            valueInput.style.display = opSel.value === 'fill_nulls' && methodSel.value === 'value' ? '' : 'none';
+            newNameInput.style.display = opSel.value === 'rename_column' ? '' : 'none';
+            colSel.style.display = opSel.value === 'drop_duplicates' ? 'none' : '';
+          };
+          methodSel.onchange = function() {
+            valueInput.style.display = opSel.value === 'fill_nulls' && methodSel.value === 'value' ? '' : 'none';
+          };
+          document.getElementById('apply-clean-btn').onclick = async function() {
+            const op = opSel.value;
+            const col = colSel.value;
+            const method = methodSel.value;
+            const value = valueInput.value;
+            const newName = newNameInput.value;
+            let payload = { session_id: STATE.sessionId, operation: op };
+            if (op !== 'drop_duplicates') payload.column = col;
+            if (op === 'fill_nulls') payload.method = method;
+            if (op === 'fill_nulls' && method === 'value') payload.value = value;
+            if (op === 'rename_column') payload.new_name = newName;
+            try {
+              const resp = await fetch(`${API}/clean`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+              });
+              const data = await resp.json();
+              if (!resp.ok || !data.success) throw new Error(data.detail || 'Failed');
+              STATE.eda = data.eda;
+              STATE.summary.column_names = data.columns;
+              document.getElementById('clean-status').textContent = 'Success';
+              await fetchAndRenderSession(STATE.sessionId);
+              renderCleaningPanel();
+            } catch (e) {
+              document.getElementById('clean-status').textContent = `Error: ${e.message}`;
+            }
+          };
+        }
+        // Call renderCleaningPanel after session load
+        async function fetchAndRenderSession(sessionId) {
+          const resp = await fetch(`${API}/sessions/${sessionId}`);
+          const data = await resp.json();
+          STATE.eda = data.eda;
+          STATE.summary = {
+            column_names: data.columns,
+            dtypes: data.eda?.dtypes || {},
+          };
+          renderSchemaEditor();
+          renderCleaningPanel();
+          // ...existing code...
+        }
         <div class="report-toolbar">
           <div class="toolbar-group">
             <input class="report-input" id="qa-input" placeholder="Ask a question about your data..." />
