@@ -1,17 +1,53 @@
-# Python environments
+# Python
 .venv/
-.venv313/
-
-# Python cache
+venv/
+env/
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.so
 
-# Local runtime artifacts
-uploads/
-autoanalyst.db
+# Node
+node_modules/
+dist/
+.next/
+.nuxt/
 
-# Local assistant/project context files (do not push)
-.cursorrules
-ai-context.md
-CLAUDE.md
-claud.md
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+*.env
+config/api_keys.json
+secrets.json
+
+# Build artifacts
+*.o
+*.d
+target/
+Cargo.lock   # only if this is a library crate; remove this line for binaries
+
+# Output files / plots
+*.png
+*.jpg
+*.jpeg
+*.pdf
+# Exception: add back any images that ARE part of the README or docs:
+# !docs/images/
+
+# Backup files
+*.bak
+*.backup
+*.orig
+dashboard.preview.bak
