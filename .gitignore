@@ -31,6 +31,7 @@ Thumbs.db
 *.env
 config/api_keys.json
 secrets.json
+sessions.db
 
 # Build artifacts
 *.o
