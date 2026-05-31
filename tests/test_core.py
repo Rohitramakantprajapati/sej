@@ -1,4 +1,3 @@
-import pytest
 from fastapi.testclient import TestClient
 from main import app
 from session_store import init_db, save_session, load_session

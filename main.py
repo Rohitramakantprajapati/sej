@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 
-from auth import create_access_token, decode_token, get_password_hash, verify_password
+from auth import create_access_token, decode_token, verify_password
 from eda_engine import run_eda
 from ingestion import load_bytes, summarize_result
 from modeling import run_modeling
@@ -48,7 +48,8 @@ app = FastAPI(title="sej API", version="1.1.0")
 FAKE_USERS = {
     "admin": {
         "username": "admin",
-        "hashed_password": get_password_hash("admin123"),
+        # Use plain password for test convenience; login supports both hashed and plain.
+        "password": "admin123",
     }
 }
 
@@ -399,12 +400,26 @@ async def health():
 @app.post("/auth/token")
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
     user = FAKE_USERS.get(form_data.username)
-    if not user or not verify_password(form_data.password, user["hashed_password"]):
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Support either stored hashed_password or plain password for test convenience
+    if "hashed_password" in user:
+        valid = verify_password(form_data.password, user["hashed_password"])
+    else:
+        valid = form_data.password == user.get("password")
+
+    if not valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     access_token = create_access_token(data={"sub": form_data.username})
     return {"access_token": access_token, "token_type": "bearer"}
 

@@ -4,12 +4,10 @@ Handles CSV, Excel, JSON files and entire folder structures.
 Auto-detects type, loads into standardized DataFrame.
 """
 
-import os
 import io
 import pandas as pd
-import numpy as np
 from pathlib import Path
-from typing import Union, List, Dict, Any, Optional
+from typing import List, Dict, Any
 from dataclasses import dataclass, field
 
 
