@@ -809,9 +809,7 @@ body { background: var(--bg); color: var(--ink); font-family: var(--font-body); 
 // ──────────────────────────────────────────────────────────────────────────────
 // State & Config
 // ──────────────────────────────────────────────────────────────────────────────
-const API = (window.location.protocol.startsWith('http') && window.location.hostname)
-  ? `${window.location.protocol}//${window.location.hostname}:8000`
-  : 'http://localhost:8000';
+const API = window.location.origin;
 let STATE = {
   sessionId: null,
   eda: null,

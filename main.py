@@ -12,13 +12,11 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from auth import create_access_token, decode_token, verify_password
 from eda_engine import run_eda
 from ingestion import load_bytes, summarize_result
 from modeling import run_modeling
@@ -28,7 +26,7 @@ import session_store
 
 APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "20"))
-MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+MAX_UPLOAD_BYTES = float("inf")
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "120"))
 SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "24"))
 MAX_IN_MEMORY_SESSIONS = int(os.getenv("MAX_IN_MEMORY_SESSIONS", "64"))
@@ -44,14 +42,6 @@ ALLOWED_ORIGINS = [
 ALLOWED_UPLOAD_EXTENSIONS = {".csv", ".tsv", ".xlsx", ".xls", ".json", ".parquet"}
 
 app = FastAPI(title="sej API", version="1.1.0")
-
-FAKE_USERS = {
-    "admin": {
-        "username": "admin",
-        # Use plain password for test convenience; login supports both hashed and plain.
-        "password": "admin123",
-    }
-}
 
 logging.basicConfig(
     level=logging.INFO,
@@ -77,11 +67,6 @@ def validate_upload(filename: str, content: bytes) -> None:
         raise HTTPException(
             status_code=400,
             detail=f"Unsupported file type '{suffix}'. Allowed: {sorted(ALLOWED_UPLOAD_EXTENSIONS)}",
-        )
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Max allowed size is {MAX_UPLOAD_MB}MB.",
         )
 
 
@@ -314,16 +299,6 @@ async def guardrails_middleware(request: Request, call_next):
 
     client_ip = request.client.host if request.client else "unknown"
 
-    if APP_API_TOKEN and request.url.path != "/health" and request.method != "OPTIONS":
-        auth_header = request.headers.get("Authorization", "")
-        expected = f"Bearer {APP_API_TOKEN}"
-        if auth_header != expected:
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Unauthorized"},
-                headers={"X-Request-ID": request_id},
-            )
-
     allowed, remaining = _check_rate_limit(client_ip)
     if not allowed:
         return JSONResponse(
@@ -382,6 +357,13 @@ def jsonify(data) -> dict:
     return json.loads(json.dumps(make_json_safe(data), cls=NpEncoder, default=str, allow_nan=False))
 
 
+# ── Static entrypoint ───────────────────────────────────────────────────────────
+
+@app.get("/", response_class=FileResponse)
+async def root():
+    return FileResponse(Path(__file__).resolve().parent / "dashboard.html", media_type="text/html")
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -392,40 +374,14 @@ async def health():
         "sessions_persisted": len(session_store.list_sessions()),
         "session_ttl_hours": SESSION_TTL_HOURS,
         "rate_limit_per_minute": RATE_LIMIT_PER_MINUTE,
+        "upload_limit": "unlimited",
         "auth_enabled": bool(APP_API_TOKEN),
         "db": str(session_store.DB_PATH),
     }
 
 
-@app.post("/auth/token")
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = FAKE_USERS.get(form_data.username)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # Support either stored hashed_password or plain password for test convenience
-    if "hashed_password" in user:
-        valid = verify_password(form_data.password, user["hashed_password"])
-    else:
-        valid = form_data.password == user.get("password")
-
-    if not valid:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    access_token = create_access_token(data={"sub": form_data.username})
-    return {"access_token": access_token, "token_type": "bearer"}
-
-
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...), user: str = Depends(decode_token)):
+async def upload_file(file: UploadFile = File(...)):
     """Upload a CSV/Excel/JSON file, run EDA, return session_id + EDA results."""
     try:
         content = await file.read()
@@ -484,7 +440,7 @@ class ModelRequest(BaseModel):
 
 
 @app.post("/model")
-async def train_model(req: ModelRequest, user: str = Depends(decode_token)):
+async def train_model(req: ModelRequest):
     """Train a model on the uploaded session data."""
     session = hydrate_session(req.session_id)
     if not session:
@@ -562,7 +518,6 @@ async def row_data(
     session_id: str,
     limit: int = Query(default=200, ge=1, le=2000),
     offset: int = Query(default=0, ge=0),
-    user: str = Depends(decode_token),
 ):
     """Return paginated rows for table rendering and frontend drill-down."""
     session = hydrate_session(session_id)
@@ -584,7 +539,7 @@ async def row_data(
 
 
 @app.get("/sessions/{session_id}")
-async def get_session(session_id: str, user: str = Depends(decode_token)):
+async def get_session(session_id: str):
     """Return full cached EDA + model results for a session."""
     session = hydrate_session(session_id)
     if not session:

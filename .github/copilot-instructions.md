@@ -44,7 +44,7 @@ AutoAnalyst is a prototype data exploration application. Users upload a tabular 
 
 ## Pending / Not Yet Built
 - Add persistent storage and stable session lifecycle.
-- Add stronger authentication, authorization, and security hardening.
+- Add stronger authentication, authorization, and security hardening only if future versions require it; current branch is upload-first and auth-free.
 - Add automated tests and CI.
 - Add dependency pinning/lock files in this workspace.
 - Improve consolidation of legacy Chart.js sections with the newer Plotly dashboard rendering path.
@@ -74,7 +74,7 @@ AutoAnalyst is a prototype data exploration application. Users upload a tabular 
 - Frontend: show upload errors in banner; retrain errors currently surfaced via alert.
 
 ## Important Notes
-- API base URL is hardcoded as http://localhost:8000.
+- The frontend uses `window.location.origin`, and the backend serves `dashboard.html` from `/`.
 - No environment variables currently referenced.
 - Session data is volatile (memory only) and disappears on restart.
 - README folder map should be treated as intended architecture, not exact current layout.

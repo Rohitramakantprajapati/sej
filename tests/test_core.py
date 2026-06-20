@@ -20,14 +20,22 @@ def test_session_persistence(tmp_path, monkeypatch):
 
 
 def test_missing_session():
-    token_resp = client.post(
-        "/auth/token",
-        data={"username": "admin", "password": "admin123"},
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
-    token = token_resp.json()["access_token"]
-    r = client.get(
-        "/sessions/nonexistent-id-xyz",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    r = client.get("/sessions/nonexistent-id-xyz")
     assert r.status_code == 404
+
+
+def test_upload_without_auth(tmp_path):
+    init_db()
+    csv_path = tmp_path / "test.csv"
+    csv_path.write_text("a,b\n1,2\n3,4\n")
+
+    with open(csv_path, "rb") as fp:
+        response = client.post(
+            "/upload",
+            files={"file": (csv_path.name, fp, "text/csv")},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "session_id" in data
+    assert data["summary"]["rows"] == 2
