@@ -26,12 +26,14 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Secrets
+# Secrets & Databases
 .env
 *.env
 config/api_keys.json
 secrets.json
 sessions.db
+autoanalyst.db
+uploads/
 
 # Build artifacts
 *.o

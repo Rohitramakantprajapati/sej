@@ -210,15 +210,16 @@ def generate_kpis(df: pd.DataFrame) -> List[Dict[str, Any]]:
         {"label": "Categorical Features", "value": str(len(_cat_cols(df))), "icon": "category"},
         {"label": "Duplicate Rows", "value": f"{df.duplicated().sum():,}", "icon": "duplicate"},
     ]
-    # Add top numeric KPIs
-    for col in num[:3]:
+    # Add all numeric KPIs
+    for col in num:
         s = df[col].dropna()
-        kpis.append({
-            "label": f"Avg {col}",
-            "value": f"{s.mean():.2f}",
-            "icon": "avg",
-            "sub": f"±{s.std():.2f}",
-        })
+        if len(s):
+            kpis.append({
+                "label": f"Avg {col}",
+                "value": f"{s.mean():.2f}",
+                "icon": "avg",
+                "sub": f"±{s.std():.2f}",
+            })
     return kpis
 
 

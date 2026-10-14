@@ -1,3 +1,50 @@
+# ── SHAP Explainability ─────────────────────────────────────────────────────
+
+import os
+import numpy as np
+import pandas as pd
+try:
+    import shap as shap
+    _SHAP_AVAILABLE = True
+except Exception:
+    shap = None  # type: ignore
+    _SHAP_AVAILABLE = False
+
+from typing import List
+# ── SHAP Explainability ─────────────────────────────────────────────────────
+
+def compute_shap_values(model, X: pd.DataFrame, feature_cols: List[str], task: str) -> List[dict]:
+    """
+    Compute mean absolute SHAP values for the given model and features.
+    Returns a list of {feature, mean_abs_shap} sorted descending.
+    Falls back gracefully if shap is unavailable.
+    """
+    if not _SHAP_AVAILABLE or shap is None:
+        return [{"feature": f, "mean_abs_shap": 0.0, "error": "shap unavailable"} for f in feature_cols]
+    try:
+        # Use TreeExplainer for tree models, KernelExplainer for others
+        if hasattr(model, "feature_importances_"):
+            explainer = shap.TreeExplainer(model)
+        else:
+            # KernelExplainer is slow; use a sample
+            sample_X = X.sample(min(100, len(X)), random_state=42) if len(X) > 100 else X
+            explainer = shap.KernelExplainer(model.predict, sample_X)
+        shap_values = explainer.shap_values(X)
+        # For classification, shap_values may be a list (one per class)
+        if isinstance(shap_values, list):
+            # Use the class with highest mean absolute value
+            abs_means = [np.abs(sv).mean() for sv in shap_values]
+            idx = int(np.argmax(abs_means))
+            shap_arr = np.abs(shap_values[idx])
+        else:
+            shap_arr = np.abs(shap_values)
+        mean_abs = np.mean(shap_arr, axis=0)
+        return [
+            {"feature": f, "mean_abs_shap": float(v)}
+            for f, v in sorted(zip(feature_cols, mean_abs), key=lambda x: -x[1])
+        ]
+    except Exception as e:
+        return [{"feature": "__error__", "mean_abs_shap": 0.0, "error": str(e)}]
 """
 Insight & Model Training Module
 Auto-selects model type, trains, returns results + feature importances.
@@ -9,8 +56,9 @@ import pandas as pd
 from typing import Dict, Any, List, Optional, Tuple
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.linear_model import LinearRegression, Ridge, LogisticRegression
 from sklearn.ensemble import (
-    RandomForestClassifier, RandomForestRegressor
+    RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier
 )
 from sklearn.cluster import KMeans
 from sklearn.metrics import (
@@ -116,37 +164,48 @@ def train_regression(X: pd.DataFrame, y: pd.Series, feature_cols: List[str]) -> 
         return {"error": "Not enough rows for regression"}
 
     X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42)
-    model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=1)
-    model.fit(X_tr, y_tr)
-    preds = model.predict(X_te)
-
-    r2 = r2_score(y_te, preds)
-    rmse = np.sqrt(mean_squared_error(y_te, preds))
-    cv_folds = max(2, min(5, len(X) // 5))
-    try:
-        cv = cross_val_score(model, X, y, cv=cv_folds, scoring="r2", n_jobs=1)
-        cv_mean = round(float(np.nanmean(cv)), 4)
-        cv_std = round(float(np.nanstd(cv)), 4)
-    except Exception:
-        cv_mean = None
-        cv_std = None
-
-    importances = dict(zip(feature_cols, model.feature_importances_.round(4)))
-    top_features = sorted(importances.items(), key=lambda x: x[1], reverse=True)[:10]
-
-    return {
-        "model": "RandomForestRegressor",
-        "r2_score": round(r2, 4),
-        "rmse": round(rmse, 4),
-        "cv_r2_mean": cv_mean,
-        "cv_r2_std": cv_std,
-        "feature_importances": dict(top_features),
-        "top_features": [f[0] for f in top_features],
-        "sample_predictions": {
-            "actual": y_te.tolist()[:20],
-            "predicted": [round(p, 4) for p in preds[:20]],
-        },
-    }
+    models = [
+        ("LinearRegression", LinearRegression()),
+        ("Ridge", Ridge(random_state=42)),
+        ("RandomForestRegressor", RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=1)),
+    ]
+    results = []
+    for name, model in models:
+        try:
+            model.fit(X_tr, y_tr)
+            preds = model.predict(X_te)
+            r2 = r2_score(y_te, preds)
+            rmse = np.sqrt(mean_squared_error(y_te, preds))
+            cv_folds = max(2, min(5, len(X) // 5))
+            try:
+                cv = cross_val_score(model, X, y, cv=cv_folds, scoring="r2", n_jobs=1)
+                cv_mean = round(float(np.nanmean(cv)), 4)
+                cv_std = round(float(np.nanstd(cv)), 4)
+            except Exception:
+                cv_mean = None
+                cv_std = None
+            importances = None
+            if hasattr(model, "feature_importances_"):
+                importances = dict(zip(feature_cols, model.feature_importances_.round(4)))
+                top_features = sorted(importances.items(), key=lambda x: x[1], reverse=True)[:10]
+            else:
+                top_features = []
+            results.append({
+                "model": name,
+                "r2_score": round(r2, 4),
+                "rmse": round(rmse, 4),
+                "cv_r2_mean": cv_mean,
+                "cv_r2_std": cv_std,
+                "feature_importances": dict(top_features) if importances else {},
+                "top_features": [f[0] for f in top_features],
+                "sample_predictions": {
+                    "actual": y_te.tolist()[:20],
+                    "predicted": [round(p, 4) for p in preds[:20]],
+                },
+            })
+        except Exception as e:
+            results.append({"model": name, "error": str(e)})
+    return {"models": results}
 
 
 def train_classification(X: pd.DataFrame, y: pd.Series, feature_cols: List[str]) -> Dict[str, Any]:
@@ -156,22 +215,34 @@ def train_classification(X: pd.DataFrame, y: pd.Series, feature_cols: List[str])
     value_counts = pd.Series(y).value_counts()
     stratify = y if len(value_counts) > 1 and (value_counts.min() >= 2) else None
     X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42, stratify=stratify)
-    model = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=1)
-    model.fit(X_tr, y_tr)
-    preds = model.predict(X_te)
-
-    acc = accuracy_score(y_te, preds)
-    importances = dict(zip(feature_cols, model.feature_importances_.round(4)))
-    top_features = sorted(importances.items(), key=lambda x: x[1], reverse=True)[:10]
-
-    return {
-        "model": "RandomForestClassifier",
-        "accuracy": round(acc, 4),
-        "feature_importances": dict(top_features),
-        "top_features": [f[0] for f in top_features],
-        "classes": [str(c) for c in model.classes_],
-        "n_classes": len(model.classes_),
-    }
+    models = [
+        ("LogisticRegression", LogisticRegression(max_iter=1000, random_state=42)),
+        ("RandomForestClassifier", RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=1)),
+        ("GradientBoostingClassifier", GradientBoostingClassifier(n_estimators=100, random_state=42)),
+    ]
+    results = []
+    for name, model in models:
+        try:
+            model.fit(X_tr, y_tr)
+            preds = model.predict(X_te)
+            acc = accuracy_score(y_te, preds)
+            importances = None
+            if hasattr(model, "feature_importances_"):
+                importances = dict(zip(feature_cols, model.feature_importances_.round(4)))
+                top_features = sorted(importances.items(), key=lambda x: x[1], reverse=True)[:10]
+            else:
+                top_features = []
+            results.append({
+                "model": name,
+                "accuracy": round(acc, 4),
+                "feature_importances": dict(top_features) if importances else {},
+                "top_features": [f[0] for f in top_features],
+                "classes": [str(c) for c in model.classes_],
+                "n_classes": len(model.classes_),
+            })
+        except Exception as e:
+            results.append({"model": name, "error": str(e)})
+    return {"models": results}
 
 
 def train_clustering(X: pd.DataFrame, feature_cols: List[str]) -> Dict[str, Any]:
@@ -287,9 +358,14 @@ def run_modeling(
     df: pd.DataFrame,
     target_col: Optional[str] = None,
     eda_result: Optional[Dict[str, Any]] = None,
+    task_override: Optional[str] = None,
 ) -> Dict[str, Any]:
     task_info = detect_task(df, target_col)
-    task = task_info["task"]
+    orig_task = task_info["task"]
+    # Allow override if valid
+    task = task_override if task_override in {"regression", "classification", "clustering"} else orig_task
+    task_info["overridden"] = (task != orig_task)
+    task_info["task"] = task
     if task == "unknown":
         raise ValueError(task_info.get("reason", "Unknown modeling task."))
 
@@ -303,11 +379,38 @@ def run_modeling(
     else:
         model_result = train_clustering(X, feature_cols)
 
-    insights = generate_insights(eda_result or {}, model_result)
+    # For comparison mode, flatten top-level metrics for dashboard backward compatibility
+    flat_result = {}
+    if "models" in model_result:
+        # Pick best by primary metric (r2 for regression, accuracy for classification)
+        metric = "r2_score" if task == "regression" else "accuracy"
+        best = max((m for m in model_result["models"] if metric in m and m[metric] is not None), key=lambda m: m[metric], default=None)
+        if best:
+            flat_result.update(best)
+        flat_result["models"] = model_result["models"]
+    else:
+        flat_result = model_result
+
+    # Compute SHAP values for top model (regression/classification only)
+    shap_values = None
+    if task in {"regression", "classification"} and "models" in model_result:
+        metric = "r2_score" if task == "regression" else "accuracy"
+        best = max((m for m in model_result["models"] if metric in m and m[metric] is not None), key=lambda m: m[metric], default=None)
+        if best:
+            # Use a sample of X for performance
+            sample_X = X.sample(min(200, len(X)), random_state=42) if len(X) > 200 else X
+            shap_values = compute_shap_values(best.get("_model", None) or best.get("model_obj", None), sample_X, feature_cols, task)
+    elif task in {"regression", "classification"} and hasattr(flat_result, "model"):
+        sample_X = X.sample(min(200, len(X)), random_state=42) if len(X) > 200 else X
+        shap_values = compute_shap_values(flat_result.get("_model", None) or flat_result.get("model_obj", None), sample_X, feature_cols, task)
+    # Store SHAP values in the result for /shap endpoint
+    flat_result["shap_values"] = shap_values
+
+    insights = generate_insights(eda_result or {}, flat_result)
 
     return {
         "task_info": task_info,
         "feature_cols": feature_cols,
-        "model_result": model_result,
+        "model_result": flat_result,
         "insights": insights,
     }

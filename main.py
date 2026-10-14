@@ -1,114 +1,3 @@
-# ── Data Cleaning Endpoint ─────────────────────────────────────────────
-class CleanRequest(BaseModel):
-    session_id: str
-    operation: str
-    column: Optional[str] = None
-    method: Optional[str] = None
-    value: Optional[str] = None
-    new_name: Optional[str] = None
-
-@app.post("/clean")
-async def clean_data(req: CleanRequest = Body(...)):
-    session = hydrate_session(req.session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found.")
-    df = session["df"]
-    op = req.operation
-    col = req.column
-    if op == "drop_column":
-        if col not in df.columns:
-            raise HTTPException(status_code=400, detail=f"Column '{col}' not found.")
-        df.drop(columns=[col], inplace=True)
-    elif op == "fill_nulls":
-        if col not in df.columns:
-            raise HTTPException(status_code=400, detail=f"Column '{col}' not found.")
-        method = req.method or "mean"
-        if method == "mean":
-            val = df[col].mean()
-        elif method == "median":
-            val = df[col].median()
-        elif method == "mode":
-            val = df[col].mode().iloc[0] if not df[col].mode().empty else None
-        elif method == "value":
-            val = req.value
-        else:
-            raise HTTPException(status_code=400, detail=f"Unsupported fill method '{method}'.")
-        df[col].fillna(val, inplace=True)
-    elif op == "drop_duplicates":
-        df.drop_duplicates(inplace=True)
-    elif op == "rename_column":
-        if col not in df.columns:
-            raise HTTPException(status_code=400, detail=f"Column '{col}' not found.")
-        new_name = req.new_name
-        if not new_name:
-            raise HTTPException(status_code=400, detail="New column name required.")
-        df.rename(columns={col: new_name}, inplace=True)
-    else:
-        raise HTTPException(status_code=400, detail=f"Unsupported operation '{op}'.")
-    # Re-run EDA
-    eda = run_eda(df)
-    session["eda"] = eda
-    save_session_record(
-        session_id=req.session_id,
-        file_name=session["file_name"],
-        file_path=session["file_path"],
-        eda=eda,
-        model=session.get("model"),
-    )
-    return JSONResponse(jsonify({
-        "success": True,
-        "eda": eda,
-        "columns": df.columns.tolist(),
-    }))
-from fastapi import Body
-# ── Schema Override Endpoint ─────────────────────────────────────────────
-class SchemaOverrideRequest(BaseModel):
-    session_id: str
-    column: str
-    dtype: str
-
-@app.post("/schema-override")
-async def schema_override(req: SchemaOverrideRequest = Body(...)):
-    session = hydrate_session(req.session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found.")
-    df = session["df"]
-    col = req.column
-    dtype = req.dtype
-    if col not in df.columns:
-        raise HTTPException(status_code=400, detail=f"Column '{col}' not found.")
-    # Supported dtypes: numeric, categorical, datetime, text
-    try:
-        if dtype == "numeric":
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-        elif dtype == "categorical":
-            df[col] = df[col].astype("category")
-        elif dtype == "datetime":
-            df[col] = pd.to_datetime(df[col], errors="coerce")
-        elif dtype == "text":
-            df[col] = df[col].astype(str)
-        else:
-            raise ValueError(f"Unsupported dtype '{dtype}'.")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to cast column: {e}")
-    # Re-run EDA
-    eda = run_eda(df)
-    session["eda"] = eda
-    # Optionally update model if present (do not retrain automatically)
-    update_session_record = save_session_record if "save_session_record" in globals() else lambda **kwargs: None
-    update_session_record(
-        session_id=req.session_id,
-        file_name=session["file_name"],
-        file_path=session["file_path"],
-        eda=eda,
-        model=session.get("model"),
-    )
-    return JSONResponse(jsonify({
-        "success": True,
-        "eda": eda,
-        "columns": df.columns.tolist(),
-        "dtypes": {c: str(df[c].dtype) for c in df.columns},
-    }))
 """sej FastAPI backend routes and runtime services."""
 
 import json
@@ -123,7 +12,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import Body, FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -406,6 +295,119 @@ def build_dashboard_spec(df: pd.DataFrame, file_name: str, eda: dict, model: Opt
 
 
 session_store.init_db()
+
+
+# ── Data Cleaning Endpoint ─────────────────────────────────────────────
+class CleanRequest(BaseModel):
+    session_id: str
+    operation: str
+    column: Optional[str] = None
+    method: Optional[str] = None
+    value: Optional[str] = None
+    new_name: Optional[str] = None
+
+@app.post("/clean")
+async def clean_data(req: CleanRequest = Body(...)):
+    session = hydrate_session(req.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    df = session["df"]
+    op = req.operation
+    col = req.column
+    if op == "drop_column":
+        if col not in df.columns:
+            raise HTTPException(status_code=400, detail=f"Column '{col}' not found.")
+        df.drop(columns=[col], inplace=True)
+    elif op == "fill_nulls":
+        if col not in df.columns:
+            raise HTTPException(status_code=400, detail=f"Column '{col}' not found.")
+        method = req.method or "mean"
+        if method == "mean":
+            val = df[col].mean()
+        elif method == "median":
+            val = df[col].median()
+        elif method == "mode":
+            val = df[col].mode().iloc[0] if not df[col].mode().empty else None
+        elif method == "value":
+            val = req.value
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported fill method '{method}'.")
+        df[col].fillna(val, inplace=True)
+    elif op == "drop_duplicates":
+        df.drop_duplicates(inplace=True)
+    elif op == "rename_column":
+        if col not in df.columns:
+            raise HTTPException(status_code=400, detail=f"Column '{col}' not found.")
+        new_name = req.new_name
+        if not new_name:
+            raise HTTPException(status_code=400, detail="New column name required.")
+        df.rename(columns={col: new_name}, inplace=True)
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported operation '{op}'.")
+    # Re-run EDA
+    eda = run_eda(df)
+    session["eda"] = eda
+    save_session_record(
+        session_id=req.session_id,
+        file_name=session["file_name"],
+        file_path=session["file_path"],
+        eda=eda,
+        model=session.get("model"),
+    )
+    return JSONResponse(jsonify({
+        "success": True,
+        "eda": eda,
+        "columns": df.columns.tolist(),
+    }))
+# ── Schema Override Endpoint ─────────────────────────────────────────────
+class SchemaOverrideRequest(BaseModel):
+    session_id: str
+    column: str
+    dtype: str
+
+@app.post("/schema-override")
+async def schema_override(req: SchemaOverrideRequest = Body(...)):
+    session = hydrate_session(req.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    df = session["df"]
+    col = req.column
+    dtype = req.dtype
+    if col not in df.columns:
+        raise HTTPException(status_code=400, detail=f"Column '{col}' not found.")
+    # Supported dtypes: numeric, categorical, datetime, text
+    try:
+        if dtype == "numeric":
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        elif dtype == "categorical":
+            df[col] = df[col].astype("category")
+        elif dtype == "datetime":
+            df[col] = pd.to_datetime(df[col], errors="coerce")
+        elif dtype == "text":
+            df[col] = df[col].astype(str)
+        else:
+            raise ValueError(f"Unsupported dtype '{dtype}'.")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to cast column: {e}")
+    # Re-run EDA
+    eda = run_eda(df)
+    session["eda"] = eda
+    # Optionally update model if present (do not retrain automatically)
+    update_session_record = save_session_record if "save_session_record" in globals() else lambda **kwargs: None
+    update_session_record(
+        session_id=req.session_id,
+        file_name=session["file_name"],
+        file_path=session["file_path"],
+        eda=eda,
+        model=session.get("model"),
+    )
+    return JSONResponse(jsonify({
+        "success": True,
+        "eda": eda,
+        "columns": df.columns.tolist(),
+        "dtypes": {c: str(df[c].dtype) for c in df.columns},
+    }))
+
 
 
 @app.middleware("http")

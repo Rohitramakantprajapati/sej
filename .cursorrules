@@ -1,0 +1,64 @@
+# Cursor Rules for This Repository (AutoAnalyst)
+
+## Project Overview
+- App goal: Automatically analyze uploaded tabular datasets and present EDA + ML results in an interactive dashboard.
+- Audience: data analysts, learners, and developers needing rapid insight generation.
+- Status: active development prototype (not production finalized).
+
+## Stack and Dependencies
+- Python backend with FastAPI.
+- Data/ML stack: pandas, numpy, scipy, scikit-learn.
+- Single-file frontend: dashboard.html (vanilla JS + CSS).
+- CDN dependencies in frontend: Chart.js, PapaParse, Google Fonts.
+- sqlite metadata persistence and optional bearer auth are configured; no cloud services are configured.
+
+## Source Layout
+- main.py: API entrypoint, CORS config, endpoint handlers, in-memory session store.
+- ingestion.py: upload parsing and schema/type normalization.
+- eda_engine.py: EDA computations (stats/distributions/correlations/anomalies/KPIs).
+- modeling.py: model task detection, feature prep, training, generated insights.
+- dashboard.html: complete UI shell, local state, rendering functions, upload/model calls.
+- README.md: concept docs, but file/folder map differs from current workspace state.
+
+## Completed Functionality
+- End-to-end upload -> EDA -> display path is implemented.
+- Baseline ML retraining by selected target column is implemented.
+- Demo mode works without backend by computing local EDA/model placeholder logic.
+- Correlation heatmap, distribution charts, anomaly cards, model metrics, and raw data preview are implemented.
+
+## Pending Functionality / Risks
+- Add persistent storage/session durability.
+- Add tests (unit + integration).
+- Add auth/security/file-size constraints and tighten CORS.
+- Use backend scatter/column endpoints consistently for richer explorer behavior.
+- Improve production readiness (dependency pinning, deployment config, monitoring).
+
+## Coding Conventions to Follow
+- Python:
+  - snake_case names.
+  - Keep endpoint JSON payloads explicit and serializable.
+  - Preserve current run_eda/run_modeling contract shape unless frontend updates in same change.
+- Frontend JS:
+  - Keep STATE as canonical client state.
+  - Use small renderX() functions that update isolated DOM sections.
+  - Keep API requests via fetch + async/await.
+- CSS:
+  - Preserve token-based :root variables and existing visual language.
+  - Prefer semantic class names over utility proliferation.
+
+## Error Handling Norms
+- Backend: use HTTPException for expected validation/session errors; catch and return controlled 500 for unexpected exceptions.
+- Frontend: show user-friendly UI error for upload/model failures; avoid silent failures.
+
+## Important Notes
+- API base is hardcoded to http://localhost:8000 in dashboard.html.
+- No environment variables are currently required.
+- SESSIONS store is in-memory only and process-local.
+- uploads directory is created but file content is handled in memory.
+- Treat README architecture as intent, not exact current filesystem truth.
+
+## Cursor Behavior Guidance
+- Prioritize minimal, surgical edits.
+- Keep backend and frontend contracts synchronized.
+- If changing data schema from API routes, update every dependent render function in dashboard.html within the same commit.
+- Run a quick regression check of both backend mode and demo mode after modifications.
