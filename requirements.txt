@@ -11,3 +11,4 @@ python-multipart==0.0.26
 python-jose[cryptography]
 passlib[bcrypt]
 pytest
+httpx
