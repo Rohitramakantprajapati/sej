@@ -9,3 +9,5 @@ services:
         value: production
       - key: MAX_UPLOAD_MB
         value: 20
+      - key: ALLOWED_ORIGINS
+        value: "*"

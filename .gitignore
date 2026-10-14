@@ -54,3 +54,5 @@ Cargo.lock   # only if this is a library crate; remove this line for binaries
 *.backup
 *.orig
 dashboard.preview.bak
+# Local Netlify folder
+.netlify

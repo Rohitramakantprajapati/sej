@@ -772,7 +772,7 @@ body { background: var(--bg); color: var(--ink); font-family: var(--font-body); 
   </a>
   <div class="header-actions">
     <span class="badge" id="status-badge">No Data</span>
-    <span class="badge" id="backend-badge">Checking API…</span>
+    <span class="badge" id="backend-badge" onclick="configureBackendUrl()" style="cursor:pointer;" title="Click to view or configure backend API URL">Checking API…</span>
   </div>
 </header>
 
@@ -1337,8 +1337,44 @@ body { background: var(--bg); color: var(--ink); font-family: var(--font-body); 
 <script>
 // ──────────────────────────────────────────────────────────────────────────────
 // Application State & Configuration
-// ──────────────────────────────────────────────────────────────────────────────
-const API = window.location.origin;
+// Determine API Backend URL dynamically:
+// 1. URL search param (?api=https://...)
+// 2. Local storage ('sej_api_url')
+// 3. Localhost / 127.0.0.1 -> window.location.origin
+// 4. Default production Render backend: 'https://sej.onrender.com'
+function getApiEndpoint() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const paramApi = urlParams.get('api');
+  if (paramApi) {
+    const clean = paramApi.trim().replace(/\/+$/, '');
+    localStorage.setItem('sej_api_url', clean);
+    return clean;
+  }
+  const saved = localStorage.getItem('sej_api_url');
+  if (saved) return saved.trim().replace(/\/+$/, '');
+
+  const host = window.location.hostname;
+  if (host === 'localhost' || host === '127.0.0.1') {
+    return window.location.origin;
+  }
+  return 'https://sej.onrender.com';
+}
+
+let API = getApiEndpoint();
+
+function configureBackendUrl() {
+  const current = API;
+  const next = window.prompt(
+    "Live Backend API URL:\n(Enter your Render service URL, e.g. https://sej.onrender.com)",
+    current
+  );
+  if (next && next.trim() && next.trim() !== current) {
+    const clean = next.trim().replace(/\/+$/, '');
+    localStorage.setItem('sej_api_url', clean);
+    API = clean;
+    checkBackend();
+  }
+}
 
 let STATE = {
   sessionId: null,
@@ -1391,18 +1427,23 @@ function formatValue(val, kind = 'auto') {
 // ──────────────────────────────────────────────────────────────────────────────
 async function checkBackend() {
   const badge = document.getElementById('backend-badge');
+  badge.textContent = 'Checking API…';
+  badge.className = 'badge';
   try {
-    const res = await fetch(`${API}/health`, { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(`${API}/health`, { signal: AbortSignal.timeout(6000) });
     if (res.ok) {
       badge.textContent = 'API Connected ✓';
       badge.className = 'badge active';
+      badge.title = `Connected to ${API} (Click to change)`;
     } else {
       badge.textContent = 'API Error';
       badge.className = 'badge warn';
+      badge.title = `API returned error from ${API} (Click to change)`;
     }
   } catch (e) {
     badge.textContent = 'API Offline';
     badge.className = 'badge warn';
+    badge.title = `Cannot reach ${API} (Click to change)`;
   }
 }
 checkBackend();
