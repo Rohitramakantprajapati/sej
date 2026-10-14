@@ -56,3 +56,4 @@ Cargo.lock   # only if this is a library crate; remove this line for binaries
 dashboard.preview.bak
 # Local Netlify folder
 .netlify
+sample_*_precomputed.json
