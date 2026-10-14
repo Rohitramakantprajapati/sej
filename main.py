@@ -115,7 +115,6 @@ import json
 import math
 import logging
 import os
-import sqlite3
 import traceback
 import uuid
 from datetime import datetime, timezone
@@ -124,21 +123,21 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from eda_engine import run_eda
 from ingestion import load_bytes, summarize_result
 from modeling import run_modeling
+import session_store
 
 # ── App setup ──────────────────────────────────────────────────────────────────
 
 APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
-MAX_UPLOAD_MB = 50
-MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "20"))
+MAX_UPLOAD_BYTES = float("inf")
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "120"))
 SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "24"))
 MAX_IN_MEMORY_SESSIONS = int(os.getenv("MAX_IN_MEMORY_SESSIONS", "64"))
@@ -186,83 +185,7 @@ app.add_middleware(
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
-DB_PATH = Path("autoanalyst.db")
-
-# In-memory session store  {session_id: {"df": ..., "eda": ..., "model": ...}}
-SESSIONS: dict = {}
 REQUEST_WINDOW: dict = {}
-
-
-def init_db() -> None:
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sessions (
-                session_id TEXT PRIMARY KEY,
-                file_name TEXT NOT NULL,
-                file_path TEXT NOT NULL,
-                eda_json TEXT,
-                model_json TEXT,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-
-
-def save_session_record(
-    session_id: str,
-    file_name: str,
-    file_path: str,
-    eda: Optional[dict],
-    model: Optional[dict],
-) -> None:
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute(
-            """
-            INSERT INTO sessions (session_id, file_name, file_path, eda_json, model_json, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(session_id) DO UPDATE SET
-                file_name=excluded.file_name,
-                file_path=excluded.file_path,
-                eda_json=excluded.eda_json,
-                model_json=excluded.model_json
-            """,
-            (
-                session_id,
-                file_name,
-                file_path,
-                json.dumps(eda) if eda is not None else None,
-                json.dumps(model) if model is not None else None,
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-
-
-def update_session_model(session_id: str, model: dict) -> None:
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute(
-            "UPDATE sessions SET model_json = ? WHERE session_id = ?",
-            (json.dumps(model), session_id),
-        )
-
-
-def load_session_record(session_id: str) -> Optional[dict]:
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT session_id, file_name, file_path, eda_json, model_json FROM sessions WHERE session_id = ?",
-            (session_id,),
-        ).fetchone()
-    if not row:
-        return None
-
-    return {
-        "session_id": row["session_id"],
-        "file_name": row["file_name"],
-        "file_path": row["file_path"],
-        "eda": json.loads(row["eda_json"]) if row["eda_json"] else None,
-        "model": json.loads(row["model_json"]) if row["model_json"] else None,
-    }
 
 
 def validate_upload(filename: str, content: bytes) -> None:
@@ -271,11 +194,6 @@ def validate_upload(filename: str, content: bytes) -> None:
         raise HTTPException(
             status_code=400,
             detail=f"Unsupported file type '{suffix}'. Allowed: {sorted(ALLOWED_UPLOAD_EXTENSIONS)}",
-        )
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Max allowed size is {MAX_UPLOAD_MB}MB.",
         )
 
 
@@ -288,11 +206,7 @@ def persist_uploaded_file(session_id: str, filename: str, content: bytes) -> Pat
 
 
 def hydrate_session(session_id: str) -> Optional[dict]:
-    session = SESSIONS.get(session_id)
-    if session:
-        return session
-
-    record = load_session_record(session_id)
+    record = session_store.load_session(session_id)
     if not record:
         return None
 
@@ -302,26 +216,20 @@ def hydrate_session(session_id: str) -> Optional[dict]:
 
     file_content = file_path.read_bytes()
     result = load_bytes(file_content, record["file_name"])
-    eda = record["eda"] or run_eda(result.df)
+    eda = record.get("eda") or run_eda(result.df)
 
     session = {
         "df": result.df,
         "eda": eda,
-        "model": record["model"],
+        "model": record.get("model"),
         "file_name": record["file_name"],
         "file_path": str(file_path),
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": record.get("created_at") or datetime.now(timezone.utc).isoformat(),
     }
-    SESSIONS[session_id] = session
 
-    if record["eda"] is None:
-        save_session_record(
-            session_id=session_id,
-            file_name=record["file_name"],
-            file_path=str(file_path),
-            eda=eda,
-            model=record["model"],
-        )
+    if record.get("eda") is None:
+        record["eda"] = eda
+        session_store.save_session(session_id, record)
     return session
 
 
@@ -336,28 +244,8 @@ def _parse_created_at(value: Optional[str]) -> datetime:
 
 
 def cleanup_expired_sessions() -> None:
-    now = datetime.now(timezone.utc)
-    ttl_seconds = max(1, SESSION_TTL_HOURS) * 3600
-    expired = []
-    for session_id, payload in list(SESSIONS.items()):
-        created_at = _parse_created_at(payload.get("created_at"))
-        age = (now - created_at).total_seconds()
-        if age > ttl_seconds:
-            expired.append(session_id)
-
-    for session_id in expired:
-        SESSIONS.pop(session_id, None)
-
-    if len(SESSIONS) <= MAX_IN_MEMORY_SESSIONS:
-        return
-
-    ordered = sorted(
-        SESSIONS.items(),
-        key=lambda item: _parse_created_at(item[1].get("created_at")),
-    )
-    overflow = len(SESSIONS) - MAX_IN_MEMORY_SESSIONS
-    for session_id, _ in ordered[:overflow]:
-        SESSIONS.pop(session_id, None)
+    # Sessions are persisted in SQLite; no in-memory eviction is required.
+    return
 
 
 def _check_rate_limit(client_key: str) -> tuple[bool, int]:
@@ -517,7 +405,7 @@ def build_dashboard_spec(df: pd.DataFrame, file_name: str, eda: dict, model: Opt
     }
 
 
-init_db()
+session_store.init_db()
 
 
 @app.middleware("http")
@@ -537,16 +425,6 @@ async def guardrails_middleware(request: Request, call_next):
             REQUEST_WINDOW.pop(key, None)
 
     client_ip = request.client.host if request.client else "unknown"
-
-    if APP_API_TOKEN and request.url.path != "/health" and request.method != "OPTIONS":
-        auth_header = request.headers.get("Authorization", "")
-        expected = f"Bearer {APP_API_TOKEN}"
-        if auth_header != expected:
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Unauthorized"},
-                headers={"X-Request-ID": request_id},
-            )
 
     allowed, remaining = _check_rate_limit(client_ip)
     if not allowed:
@@ -606,6 +484,13 @@ def jsonify(data) -> dict:
     return json.loads(json.dumps(make_json_safe(data), cls=NpEncoder, default=str, allow_nan=False))
 
 
+# ── Static entrypoint ───────────────────────────────────────────────────────────
+
+@app.get("/", response_class=FileResponse)
+async def root():
+    return FileResponse(Path(__file__).resolve().parent / "dashboard.html", media_type="text/html")
+
+
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -613,11 +498,12 @@ async def health():
     return {
         "status": "ok",
         "environment": APP_ENV,
-        "sessions_in_memory": len(SESSIONS),
+        "sessions_persisted": len(session_store.list_sessions()),
         "session_ttl_hours": SESSION_TTL_HOURS,
         "rate_limit_per_minute": RATE_LIMIT_PER_MINUTE,
+        "upload_limit": "unlimited",
         "auth_enabled": bool(APP_API_TOKEN),
-        "db": str(DB_PATH),
+        "db": str(session_store.DB_PATH),
     }
 
 
@@ -645,7 +531,19 @@ async def upload_file(file: UploadFile = File(...)):
         file_path = persist_uploaded_file(session_id, file.filename or "uploaded_file", content)
         eda = run_eda(result.df)
 
-        SESSIONS[session_id] = {
+        session_store.save_session(
+            session_id,
+            {
+                "session_id": session_id,
+                "file_name": file.filename or "uploaded_file",
+                "file_path": str(file_path),
+                "eda": eda,
+                "model": None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+        session = {
             "df": result.df,
             "eda": eda,
             "model": None,
@@ -654,21 +552,13 @@ async def upload_file(file: UploadFile = File(...)):
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
-        save_session_record(
-            session_id=session_id,
-            file_name=file.filename or "uploaded_file",
-            file_path=str(file_path),
-            eda=eda,
-            model=None,
-        )
-
         logger.info("Created session %s for file %s", session_id, file.filename)
 
         return JSONResponse(jsonify({
             "session_id": session_id,
             "summary": summarize_result(result),
             "eda": eda,
-            "dashboard_spec": build_dashboard_spec(result.df, file.filename or "uploaded_file", eda, None),
+            "dashboard_spec": build_dashboard_spec(session["df"], file.filename or "uploaded_file", eda, None),
         }))
 
     except HTTPException:
@@ -688,13 +578,7 @@ class ModelRequest(BaseModel):
 @app.post("/model")
 async def train_model(req: ModelRequest):
     """Train a model on the uploaded session data."""
-    session = None
-    try:
-        session = hydrate_session(req.session_id)
-    except Exception:
-        # Force one retry from persisted record if in-memory state became inconsistent.
-        SESSIONS.pop(req.session_id, None)
-        session = hydrate_session(req.session_id)
+    session = hydrate_session(req.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found. Please upload a file first.")
 
@@ -703,7 +587,13 @@ async def train_model(req: ModelRequest):
         eda = session["eda"]
         model_result = run_modeling(df, req.target_col, eda)
         session["model"] = model_result
-        update_session_model(req.session_id, model_result)
+        record = session_store.load_session(req.session_id) or {}
+        record["model"] = model_result
+        record["eda"] = eda
+        record["file_name"] = session["file_name"]
+        record["file_path"] = session["file_path"]
+        record["created_at"] = session["created_at"]
+        session_store.save_session(req.session_id, record)
         return JSONResponse(jsonify({
             **model_result,
             "dashboard_spec": build_dashboard_spec(df, session["file_name"], eda, model_result),

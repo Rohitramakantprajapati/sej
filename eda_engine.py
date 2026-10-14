@@ -6,7 +6,7 @@ Descriptive stats, distributions, correlations, anomaly detection.
 import numpy as np
 import pandas as pd
 from scipy import stats
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────

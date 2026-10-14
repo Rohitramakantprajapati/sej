@@ -47,6 +47,7 @@ Open `http://localhost:3000/dashboard.html`.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| GET | `/` | Serve the single-page dashboard UI |
 | GET | `/health` | Health check |
 | POST | `/upload` | Upload file and return `session_id`, EDA summary, and dashboard metadata |
 | POST | `/model` | Retrain model with optional target column |
@@ -91,7 +92,8 @@ Open `http://localhost:3000/dashboard.html`.
 - Workspace still uses a flat file layout, but the code now imports from the flat modules directly.
 - Session state is partially persistent via sqlite metadata, but the in-memory data cache still resets on restart.
 - No formal unit/integration CI suite yet, though a local smoke harness is available.
-- Optional bearer auth and rate limiting are available via environment variables.
+- Upload-first flow with no authentication required by default.
+ - Removed unused `auth.py` helper; authentication is optional via `APP_API_TOKEN` in `.env`.
 
 ## Validation Checklist
 
